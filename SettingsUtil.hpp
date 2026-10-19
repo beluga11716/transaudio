@@ -1,7 +1,61 @@
 #pragma once
 
+#include <wil/resource.h>
+
 constexpr auto CONFIG_NAME = L"AudioPlaybackConnector.json";
 constexpr auto BUFFER_SIZE = 4096;
+
+// Autostart lives in the registry rather than in the settings file, so it keeps
+// working when the settings file is deleted or the executable is moved.
+constexpr auto AUTOSTART_RUN_KEY = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+constexpr auto AUTOSTART_VALUE_NAME = L"AudioPlaybackConnector";
+
+std::wstring AutoStartCommand()
+{
+	return L"\"" + GetModuleFsPath(g_hInst).wstring() + L"\"";
+}
+
+bool IsAutoStartEnabled()
+{
+	wil::unique_hkey hKey;
+	if (RegOpenKeyExW(HKEY_CURRENT_USER, AUTOSTART_RUN_KEY, 0, KEY_READ, hKey.put()) != ERROR_SUCCESS)
+	{
+		return false;
+	}
+
+	wchar_t buffer[1024]{};
+	DWORD size = sizeof(buffer);
+	if (RegQueryValueExW(hKey.get(), AUTOSTART_VALUE_NAME, nullptr, nullptr, reinterpret_cast<LPBYTE>(buffer), &size) != ERROR_SUCCESS)
+	{
+		return false;
+	}
+
+	if (size % sizeof(wchar_t) != 0 || size == 0)
+	{
+		return false;
+	}
+	return std::wstring(buffer, size / sizeof(wchar_t) - 1) == AutoStartCommand();
+}
+
+void SetAutoStart(bool enable)
+{
+	wil::unique_hkey hKey;
+	THROW_IF_WIN32_ERROR(RegCreateKeyExW(HKEY_CURRENT_USER, AUTOSTART_RUN_KEY, 0, nullptr, 0, KEY_SET_VALUE, nullptr, hKey.put(), nullptr));
+	if (enable)
+	{
+		auto command = AutoStartCommand();
+		THROW_IF_WIN32_ERROR(RegSetValueExW(hKey.get(), AUTOSTART_VALUE_NAME, 0, REG_SZ, reinterpret_cast<const BYTE*>(command.c_str()),
+			static_cast<DWORD>((command.size() + 1) * sizeof(wchar_t))));
+	}
+	else
+	{
+		auto error = RegDeleteValueW(hKey.get(), AUTOSTART_VALUE_NAME);
+		if (error != ERROR_SUCCESS && error != ERROR_FILE_NOT_FOUND)
+		{
+			THROW_WIN32(error);
+		}
+	}
+}
 
 void DefaultSettings()
 {

@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "AudioPlaybackConnector.h"
+#include "HealthMonitor.hpp"
 
 LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);
 void SetupFlyout();
@@ -81,6 +82,11 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 
 	PostMessageW(g_hWnd, WM_CONNECTDEVICE, 0, 0);
 
+	// Watch the A2DP sink meter so a dead monitor bridge can be repaired without
+	// the user switching playback devices by hand.
+	HealthInit();
+	SetTimer(g_hWnd, TIMER_HEALTH, 1000, nullptr);
+
 	MSG msg;
 	while (GetMessageW(&msg, nullptr, 0, 0))
 	{
@@ -123,6 +129,12 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 		if (lParam && CompareStringOrdinal(reinterpret_cast<LPCWCH>(lParam), -1, L"ImmersiveColorSet", -1, TRUE) == CSTR_EQUAL)
 		{
 			UpdateNotifyIcon();
+		}
+		break;
+	case WM_TIMER:
+		if (wParam == TIMER_HEALTH)
+		{
+			HealthOnTimer();
 		}
 		break;
 	case WM_NOTIFYICON:
@@ -240,6 +252,32 @@ void SetupMenu()
 		winrt::Windows::System::Launcher::LaunchUriAsync(Uri(L"ms-settings:bluetooth"));
 	});
 
+	FontIcon repairIcon;
+	repairIcon.Glyph(L"\xE90F");
+
+	MenuFlyoutItem repairItem;
+	repairItem.Text(_(L"Repair audio"));
+	repairItem.Icon(repairIcon);
+	repairItem.Click([](const auto&, const auto&) {
+		HealthHealNow();
+	});
+
+	FontIcon powerIcon;
+	powerIcon.Glyph(L"\xE7E8");
+
+	ToggleMenuFlyoutItem autoStartItem;
+	autoStartItem.Text(_(L"Start with Windows"));
+	autoStartItem.Icon(powerIcon);
+	autoStartItem.IsChecked(IsAutoStartEnabled());
+	// Typed parameters: a generic lambda makes MSVC 14.5x emit a bogus C4864.
+	autoStartItem.Click([](winrt::Windows::Foundation::IInspectable const& sender, winrt::Windows::UI::Xaml::RoutedEventArgs const&) {
+		try
+		{
+			SetAutoStart(sender.as<ToggleMenuFlyoutItem>().IsChecked());
+		}
+		CATCH_LOG();
+	});
+
 	FontIcon closeIcon;
 	closeIcon.Glyph(L"\xE8BB");
 
@@ -272,8 +310,13 @@ void SetupMenu()
 
 	MenuFlyout menu;
 	menu.Items().Append(settingsItem);
+	menu.Items().Append(repairItem);
+	menu.Items().Append(autoStartItem);
 	menu.Items().Append(exitItem);
-	menu.Opened([](const auto& sender, const auto&) {
+	// NOTE: the parameters are typed instead of `const auto&` because MSVC 14.5x
+	// reports a bogus C4864 ("keyword 'template' expected") for `sender.as<MenuFlyout>()`
+	// inside a generic lambda, and warnings are errors in this project.
+	menu.Opened([](winrt::Windows::Foundation::IInspectable const& sender, winrt::Windows::Foundation::IInspectable const&) {
 		auto menuItems = sender.as<MenuFlyout>().Items();
 		auto itemsCount = menuItems.Size();
 		if (itemsCount > 0)
@@ -303,11 +346,14 @@ winrt::fire_and_forget ConnectDevice(DevicePicker picker, DeviceInformation devi
 		{
 			g_audioPlaybackConnections.emplace(device.Id(), std::pair(device, connection));
 
-			connection.StateChanged([](const auto& sender, const auto&) {
+			connection.StateChanged([](AudioPlaybackConnection const& sender, winrt::Windows::Foundation::IInspectable const&) {
 				if (sender.State() == AudioPlaybackConnectionState::Closed)
 				{
 					auto it = g_audioPlaybackConnections.find(std::wstring(sender.DeviceId()));
-					if (it != g_audioPlaybackConnections.end())
+					// Only clean up when this callback belongs to the instance that is
+					// still tracked. A stale connection from a previous attempt must not
+					// remove the connection that replaced it (same device id).
+					if (it != g_audioPlaybackConnections.end() && winrt::get_unknown(it->second.second) == winrt::get_unknown(sender))
 					{
 						g_devicePicker.SetDisplayStatus(it->second.first, {}, DevicePickerDisplayStatusOptions::None);
 						g_audioPlaybackConnections.erase(it);
@@ -367,6 +413,7 @@ winrt::fire_and_forget ConnectDevice(DevicePicker picker, DeviceInformation devi
 	if (success)
 	{
 		picker.SetDisplayStatus(device, _(L"Connected"), DevicePickerDisplayStatusOptions::ShowDisconnectButton);
+		HealthNoteOpened(std::wstring(device.Id()));
 	}
 	else
 	{
