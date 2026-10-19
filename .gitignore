@@ -340,3 +340,6 @@ ASALocalRun/
 healthchecksdb
 
 translate/generated
+
+# health monitor log (written next to the executable)
+*.health.log
