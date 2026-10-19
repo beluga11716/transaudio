@@ -67,3 +67,11 @@ msgstr ""
 #: AudioPlaybackConnector.cpp:362
 msgid "Connected"
 msgstr ""
+
+#: AudioPlaybackConnector.cpp:265
+msgid "Repair audio"
+msgstr ""
+
+#: AudioPlaybackConnector.cpp:284
+msgid "Start with Windows"
+msgstr ""

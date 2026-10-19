@@ -69,3 +69,11 @@ msgstr "未知错误"
 #: AudioPlaybackConnector.cpp:362
 msgid "Connected"
 msgstr "已连接"
+
+#: AudioPlaybackConnector.cpp:265
+msgid "Repair audio"
+msgstr "修复音频"
+
+#: AudioPlaybackConnector.cpp:284
+msgid "Start with Windows"
+msgstr "开机自启"
