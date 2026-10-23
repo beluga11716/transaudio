@@ -21,6 +21,17 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 
 	g_hInst = hInstance;
 
+	// Only one copy may run. A second one would add a second notification-area
+	// icon and both copies would fight over the same A2DP connection (the
+	// autostart entry plus a manual launch, or a restart helper, is enough to
+	// produce two). The handle is intentionally never closed: it has to outlive
+	// the window loop so the name stays taken until the process ends.
+	HANDLE const singleInstance = CreateMutexW(nullptr, FALSE, L"Local\\AudioPlaybackConnector.SingleInstance");
+	if (singleInstance != nullptr && GetLastError() == ERROR_ALREADY_EXISTS)
+	{
+		return 0;
+	}
+
 	winrt::init_apartment();
 
 	bool supported = false;
